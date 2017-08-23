@@ -99,6 +99,16 @@ namespace TLSharp.Core
 
             // error handling order is important
 
+            await HandleError(request);
+
+            _session.Save();
+
+            // escalate to user
+            request.ThrowIfHasError();
+        }
+
+        private async Task HandleError(TLMethod request)
+        {
             if (request.Error == RpcRequestError.MigrateDataCenter)
             {
                 if (request.ErrorMessage.StartsWith("PHONE_MIGRATE_") ||
@@ -142,17 +152,14 @@ namespace TLSharp.Core
                 // assuming that salt was already updated by underlying layer
                 request.ResetError();
                 await _sender.Send(request);
+                if (request.Error != RpcRequestError.None)
+                    await HandleError(request);
             }
 
             if (request.Error == RpcRequestError.MessageSeqNoTooLow)
             {
                 // resync updates state
             }
-
-            _session.Save();
-
-            // escalate to user
-            request.ThrowIfHasError();
         }
 
         private async Task ReconnectToDcAsync(int dcId)

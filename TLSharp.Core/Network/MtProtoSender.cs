@@ -47,21 +47,31 @@ namespace TLSharp.Core.Network
         {
             Debug.WriteLine("Start listening");
             finishedListening = new TaskCompletionSource<bool>();
-            while (true)
+            try
             {
-                var message = await _transport.Receieve().ConfigureAwait(false);
-                if (message == null)
-                    break;
 
-                var decodedMessage = DecodeMessage(message.Body);
 
-                using (var messageStream = new MemoryStream(decodedMessage.Item1, false))
-                using (var messageReader = new BinaryReader(messageStream))
+                while (true)
                 {
-                    processMessage(decodedMessage.Item2, decodedMessage.Item3, messageReader);
+
+                    var message = await _transport.Receieve().ConfigureAwait(false);
+                    if (message == null)
+                        break;
+
+                    var decodedMessage = DecodeMessage(message.Body);
+
+                    using (var messageStream = new MemoryStream(decodedMessage.Item1, false))
+                    using (var messageReader = new BinaryReader(messageStream))
+                    {
+                        processMessage(decodedMessage.Item2, decodedMessage.Item3, messageReader);
+                    }
                 }
+                finishedListening.SetResult(true);
             }
-            finishedListening.SetResult(true);
+            catch(ObjectDisposedException ex)
+            {
+                //disposed
+            }
         }
 
         public void ChangeTransport(TcpTransport transport)
