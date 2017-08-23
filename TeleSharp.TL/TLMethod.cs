@@ -10,7 +10,15 @@ namespace TeleSharp.TL
 {
     public abstract class TLMethod : TLObject
     {
-        
+        public RpcRequestError Error { get; private set; }
+        public string ErrorMessage { get; private set; }
+
+        public virtual void OnError(int errorCode, string errorMessage)
+        {
+            Error = (RpcRequestError)errorCode;
+            ErrorMessage = errorMessage;
+        }
+
         public abstract void deserializeResponse(BinaryReader stream);
         #region MTPROTO
         public long MessageId { get; set; }
@@ -40,7 +48,24 @@ namespace TeleSharp.TL
                 return Dirty || (Confirmed && !ConfirmReceived && DateTime.Now - SendTime > TimeSpan.FromSeconds(3));
             }
         }
+
+
+        public void ResetError()
+        {
+            Error = RpcRequestError.None;
+            ErrorMessage = null;
+        }
+
+        public void ThrowIfHasError()
+        {
+            if (Error != RpcRequestError.None)
+            {
+                throw new TelegramReqestException(Error, ErrorMessage);
+            }
+        }
         #endregion
 
     }
+
+    
 }

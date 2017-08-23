@@ -10,6 +10,7 @@ namespace TLSharp.Core.Network
     public class TcpTransport : IDisposable
     {
         private readonly TcpClient _tcpClient;
+        private readonly NetworkStream _stream;
         private int sendCounter = 0;
 
         public TcpTransport(string address, int port, TcpClientConnectionHandler handler = null)
@@ -20,9 +21,15 @@ namespace TLSharp.Core.Network
 
                 var ipAddress = IPAddress.Parse(address);
                 _tcpClient.Connect(ipAddress, port);
+                _tcpClient.LingerState = new LingerOption(true, 1);
+                _stream = _tcpClient.GetStream();
             }
             else
+            {
                 _tcpClient = handler(address, port);
+                _tcpClient.LingerState = new LingerOption(true, 1);
+                _stream = _tcpClient.GetStream();
+            }
         }
 
         public async Task Send(byte[] packet)
@@ -38,42 +45,68 @@ namespace TLSharp.Core.Network
 
         public async Task<TcpMessage> Receieve()
         {
-            var stream = _tcpClient.GetStream();
+            //var stream = _tcpClient.GetStream();
 
+            //var packetLengthBytes = new byte[4];
+            //if (await stream.ReadAsync(packetLengthBytes, 0, 4) != 4)
+            //    throw new InvalidOperationException("Couldn't read the packet length");
+            //int packetLength = BitConverter.ToInt32(packetLengthBytes, 0);
+
+            //var seqBytes = new byte[4];
+            //if (await stream.ReadAsync(seqBytes, 0, 4) != 4)
+            //    throw new InvalidOperationException("Couldn't read the sequence");
+            //int seq = BitConverter.ToInt32(seqBytes, 0);
+
+            //int readBytes = 0;
+            //var body = new byte[packetLength - 12];
+            //int neededToRead = packetLength - 12;
+
+            //do
+            //{
+            //    var bodyByte = new byte[packetLength - 12];
+            //    var availableBytes = await stream.ReadAsync(bodyByte, 0, neededToRead);
+            //    neededToRead -= availableBytes;
+            //    Buffer.BlockCopy(bodyByte, 0, body, readBytes, availableBytes);
+            //    readBytes += availableBytes;
+            //}
+            //while (readBytes != packetLength - 12);
+
+            //var crcBytes = new byte[4];
+            //if (await stream.ReadAsync(crcBytes, 0, 4) != 4)
+            //    throw new InvalidOperationException("Couldn't read the crc");
+            //int checksum = BitConverter.ToInt32(crcBytes, 0);
+
+            // packet length
             var packetLengthBytes = new byte[4];
-            if (await stream.ReadAsync(packetLengthBytes, 0, 4) != 4)
-                throw new InvalidOperationException("Couldn't read the packet length");
+            if (!await ReadBuffer(_stream, packetLengthBytes))
+                return null;
+
             int packetLength = BitConverter.ToInt32(packetLengthBytes, 0);
 
+            // seq
             var seqBytes = new byte[4];
-            if (await stream.ReadAsync(seqBytes, 0, 4) != 4)
-                throw new InvalidOperationException("Couldn't read the sequence");
+            if (!await ReadBuffer(_stream, seqBytes))
+                return null;
+
             int seq = BitConverter.ToInt32(seqBytes, 0);
 
-            int readBytes = 0;
-            var body = new byte[packetLength - 12];
-            int neededToRead = packetLength - 12;
+            // body
+            var bodyBytes = new byte[packetLength - 12];
+            if (!await ReadBuffer(_stream, bodyBytes))
+                return null;
 
-            do
-            {
-                var bodyByte = new byte[packetLength - 12];
-                var availableBytes = await stream.ReadAsync(bodyByte, 0, neededToRead);
-                neededToRead -= availableBytes;
-                Buffer.BlockCopy(bodyByte, 0, body, readBytes, availableBytes);
-                readBytes += availableBytes;
-            }
-            while (readBytes != packetLength - 12);
-
+            // crc
             var crcBytes = new byte[4];
-            if (await stream.ReadAsync(crcBytes, 0, 4) != 4)
-                throw new InvalidOperationException("Couldn't read the crc");
+            if (!await ReadBuffer(_stream, crcBytes))
+                return null;
+
             int checksum = BitConverter.ToInt32(crcBytes, 0);
 
-            byte[] rv = new byte[packetLengthBytes.Length + seqBytes.Length + body.Length];
+            byte[] rv = new byte[packetLengthBytes.Length + seqBytes.Length + bodyBytes.Length];
 
             Buffer.BlockCopy(packetLengthBytes, 0, rv, 0, packetLengthBytes.Length);
             Buffer.BlockCopy(seqBytes, 0, rv, packetLengthBytes.Length, seqBytes.Length);
-            Buffer.BlockCopy(body, 0, rv, packetLengthBytes.Length + seqBytes.Length, body.Length);
+            Buffer.BlockCopy(bodyBytes, 0, rv, packetLengthBytes.Length + seqBytes.Length, bodyBytes.Length);
             var crc32 = new Ionic.Crc.CRC32();
             crc32.SlurpBlock(rv, 0, rv.Length);
             var validChecksum = crc32.Crc32Result;
@@ -83,7 +116,24 @@ namespace TLSharp.Core.Network
                 throw new InvalidOperationException("invalid checksum! skip");
             }
 
-            return new TcpMessage(seq, body);
+            return new TcpMessage(seq, bodyBytes);
+        }
+
+        private static async Task<bool> ReadBuffer(NetworkStream stream, byte[] buffer)
+        {
+            var bytesRead = 0;
+
+            do
+            {
+                var availableBytes = await stream.ReadAsync(buffer, bytesRead, buffer.Length - bytesRead);
+                if (availableBytes == 0) // read the termination packet
+                    return false;
+
+                bytesRead += availableBytes;
+            }
+            while (bytesRead != buffer.Length);
+
+            return true;
         }
 
         public bool IsConnected
